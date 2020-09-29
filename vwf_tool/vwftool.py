@@ -24,7 +24,22 @@ reg_cache = {
     re.compile(r"^\[\s*branch2?\s*=\s*(.+)\s*]"): [0, 1],
     re.compile(r"^\[\s*jump\s*=\s*(.+)\s*]"): [0, 1],
     re.compile(r"^\[\s*skip\s*=\s*(.+)\s*]"): [0, 1],
-    re.compile(r"^\[\s*/\s*skip\s*]"): [0],
+    re.compile(r"^\[\s*music2\s*=\s*([0-9a-fA-F]+)\s*]"): [0, 1],
+    re.compile(r"^\[\s*space\s*width\s*=\s*([0-9]+)\s*]"): [0, 1],
+    re.compile(r"^\[\s*switch\s*=\s*(on)\s*]"): [0],
+    re.compile(r"^\[\s*switch\s*=\s*(off)\s*]"): [0],
+    re.compile(r"^\[\s*switch\s*=\s*(toggle)\s*]"): [0],
+    re.compile(r"^\[\s*compare\s*=\s*([0-9A-Fa-f]+)\s*,\s*(equal|not\s+equal|greater|less)\s*,\s*([0-9A-Fa-f]+)\s*,\s*(.+)\s*]"): [0, 1, 2, 3, 4],
+    re.compile(r"^\[\s*sfx\s*1DF9\s*=\s*([0-9a-fA-F]+)\s*]"): [0, 1],
+    re.compile(r"^\[\s*sfx\s*1DFC\s*=\s*([0-9a-fA-F]+)\s*]"): [0, 1],
+    re.compile(r"^\[\s*exani\s*manual\s*=\s*((slot)?\s*([0-9a-fA-F]+))\s*,\s*((frame)?\s*([0-9a-fA-F]+))\s*]"): [0, 1, 3, 4, 6],
+    re.compile(r"^\[\s*exani\s*custom\s*=\s*((slot)?\s*([0-9a-fA-F]+))\s*,\s*(enable|disable)\s*]"): [0, 1, 3, 4],
+    re.compile(r"^\[\s*exani\s*one\s*shot\s*=\s*((slot)?\s*([0-9a-fA-F]+))\s*,\s*(enable|disable)\s*]"): [0, 1, 3, 4],
+    re.compile(r"^\[\s*sfx\s*echo\s*=\s*on\s*]"): [0],
+    re.compile(r"^\[\s*sfx\s*echo\s*=\s*off\s*]"): [0],
+    re.compile(r"^\[\s*/?asm\s*=\s*once\s*]"): [0],
+    re.compile(r"^\[\s*/?asm\s*=\s*always\s*]"): [0],
+    re.compile(r"^\[\s*/?asm\s*=\s*stop\s*]"): [0],
 }
 
 
@@ -43,6 +58,7 @@ class BaseVWFException(Exception):
 
 
 def define(definitions):
+    print("Creating definitions...")
     def_path = definitions
     try:
         with open(def_path, "r") as f:
@@ -83,10 +99,11 @@ def define(definitions):
             raise BaseVWFException('Tag defining error', message=message, tag=invalid_tag.replace('\n', ''))
         i += 1
 
-    print("Finished defining\n")
+    print("Finished creating definitions.\n")
 
 
 def convert(convert_path):
+    print("Converting dialogues...")
     try:
         with open(convert_path, "r") as f:
             content = f.readlines()
@@ -104,6 +121,7 @@ def convert(convert_path):
             convert_txt(current_file.group(1), current_file.group(2))
         else:
             print(f"Line {str(x)}: Invalid information, {line_}")
+    print("Finished converting dialogues.\n")
 
 
 def convert_txt(msg_number, msg_path):
@@ -127,12 +145,13 @@ def convert_txt(msg_number, msg_path):
 
     original_content = content
 
-    global bin_data, cur_num, num_used
+    global bin_data, cur_num, num_used, asm_data
     data = []
     data_2 = []
     labels = {}
     for pass_ in range(2):
         data = []
+        data_2 = []
         space = [-1]
         topic = 0
         content = original_content
@@ -270,6 +289,7 @@ def convert_txt(msg_number, msg_path):
                     cur_data = int(command[2], 16)
                     if cur_data < 0x100:
                         data.append(cur_data)
+                        data_2.append(command[2])
                     else:
                         raise parse_error('Out of range error',
                                           msg="The specified number in [music=*] is too high.",
@@ -284,6 +304,7 @@ def convert_txt(msg_number, msg_path):
                         space.insert(0, -1)
                     else:
                         space.pop(0)
+
 
                 elif command[0] == 0x8E:  # sprite
                     loop = int(command[2])
@@ -363,6 +384,8 @@ def convert_txt(msg_number, msg_path):
                                 branch_data_ = labels[branches[x]]
                                 data.append(branch_data_ & 0xFF)
                                 data.append(branch_data_ >> 8)
+                                data_2.append(branches[x])
+                                data_2.append(branches[x])
                             except KeyError:
                                 raise parse_error('Label not defined error',
                                                   msg="The label in [branch=*] not defined yet.",
@@ -380,6 +403,8 @@ def convert_txt(msg_number, msg_path):
                             jump_data = labels[command[2]]
                             data.append(jump_data & 0xFF)
                             data.append(jump_data >> 8)
+                            data_2.append(command[2])
+                            data_2.append(command[2])
                         except KeyError:
                             raise parse_error('Label not defined error',
                                               msg="The label in [jump=*] not defined yet.",
@@ -396,10 +421,184 @@ def convert_txt(msg_number, msg_path):
                             skip_data = labels[command[2]]
                             data.append(skip_data & 0xFF)
                             data.append(skip_data >> 8)
+                            data_2.append(command[2])
+                            data_2.append(command[2])
                         except KeyError:
                             raise parse_error('Label not defined error',
                                               msg="The label in [skip=*] not defined yet.",
                                               label=command[2])
+
+                elif command[0] == 0x93:  # music without sample upload
+                    cur_data = int(command[2], 16)
+                    data_2.append(command[2])
+                    if cur_data < 0x100:
+                        data.append(cur_data)
+                    else:
+                        raise parse_error('Out of range error',
+                                          msg="The specified number in [music2=*] is too high.",
+                                          number=f'0x{cur_data:X}')
+
+                elif command[0] == 0x94:  # space width
+                    cur_data = int(command[2])
+                    if cur_data < 0x100:
+                        data.append(cur_data)
+                        data_2.append(command[2])
+                    else:
+                        raise parse_error('Out of range error',
+                                          msg="The specified number in [space width=*] is too high.",
+                                          number=f'0x{cur_data:X}')
+
+                elif command[0] == 0x98:  # RAM/ROM compare
+                    space[0] = -1
+                    possibilities = command[5].split(",")
+                    nums = len(possibilities)
+                    if nums != 2:
+                        raise parse_error('Out of range error',
+                                          msg="The number of labels in [compare=*,*,*,*,*] is not 2.",
+                                          number=nums)
+                    data_2.append(command[2])
+                    data_2.append(command[2])
+                    data_2.append(command[2])
+                    data_2.append(command[4])
+                    data_2.append(command[3])
+                    if pass_ == 0:
+                        data.append(0x00)
+                        data.append(0x00)
+                        data.append(0x00)
+                        data.append(0x00)
+                        data.append(0x00)
+                        for k in range(nums):
+                            data.append(0x00)
+                            data.append(0x00)
+                            data_2.append(possibilities[k])
+                            data_2.append(possibilities[k])
+                    else:
+                        current_address = int(command[2], 16)
+                        current_compare = int(command[4], 16) 
+                        data.append(current_address & 0xFF)
+                        data.append((current_address >> 8) & 0xFF)
+                        data.append((current_address >> 16) & 0xFF)
+                        data.append(current_compare & 0xFF)
+                        parse_command_1 = re.search(r"^equal$", command[3])
+                        parse_command_2 = re.search(r"^not\s+equal$", command[3])
+                        parse_command_3 = re.search(r"^greater$", command[3])
+                        parse_command_4 = re.search(r"^less$", command[3])
+                        if parse_command_1:
+                            data.append(0x00)
+                        elif parse_command_2:
+                            data.append(0x01)
+                        elif parse_command_3:
+                            data.append(0x02)
+                        elif parse_command_4:
+                            data.append(0x03)
+                        else:
+                            raise parse_error('Invalid argument specified error',
+                                            msg="The invalid argument is specified in [compare=*,*,*,*,*].",
+                                            branch=command[3])
+                        for x in range(len(possibilities)):
+                            possibilities_data = re.sub(r"^\s+|\s+$", r"", command[1])
+                            if possibilities_data:
+                                pass
+                            else:
+                                raise parse_error('Empty label specified error',
+                                                  msg="The empty label is specified in [compare=*,*,*,*,*].",
+                                                  branch=command[1])
+
+                            try:
+                                data.append(labels[possibilities[x]] & 0xFF)
+                                data.append(labels[possibilities[x]] >> 8)
+                                data_2.append(possibilities[x])
+                                data_2.append(possibilities[x])
+                            except KeyError:
+                                raise parse_error('Label not defined error',
+                                                  msg="The label in [compare=*,*,*,*,*] not defined yet.",
+                                                  label=possibilities[x])
+
+                elif command[0] == 0x99:  # sfx playback
+                    cur_data = int(command[2], 16)
+                    data_2.append(command[2])
+                    if cur_data < 0x100:
+                        data.append(cur_data)
+                    else:
+                        raise parse_error('Out of range error',
+                                          msg="The specified number in [sfx 1DF9=*] is too high.",
+                                          number=f'0x{cur_data:X}')
+                elif command[0] == 0x9A:  # sfx playback
+                    cur_data = int(command[2], 16)
+                    data_2.append(command[2])
+                    if cur_data < 0x100:
+                        data.append(cur_data)
+                    else:
+                        raise parse_error('Out of range error',
+                                          msg="The specified number in [sfx 1DFC=*] is too high.",
+                                          number=f'0x{cur_data:X}')
+
+                elif command[0] == 0x9B:  # exanimation manual
+                    cur_data = int(command[3], 16)
+                    if cur_data < 0x10:
+                        cur_frame = int(command[5],16)
+                        if cur_frame < 0x100:
+                                data.append(cur_data)
+                                data.append(cur_frame)
+                                data_2.append(command[2])
+                                data_2.append(command[4])
+                        else:
+                            raise parse_error('Out of range error',
+                                            msg="The specified frame number in [exani manual=*,*] is too high.",
+                                            number=f'0x{cur_frame:X}')
+                    else:
+                        raise parse_error('Out of range error',
+                                          msg="The specified slot number in [exani manual=*,*] is too high.",
+                                          number=f'0x{cur_data:X}')
+
+                elif command[0] == 0x9C:  # exanimation custom
+                    cur_data = int(command[3], 16)
+                    if cur_data < 0x10:
+                        cur_setting = command[4].lower()
+                        data_2.append(command[2]+" | "+command[4])
+                        if cur_setting == "enable":
+                                data.append(cur_data)
+                        elif cur_setting == "disable":
+                                data.append(cur_data | 0x80)
+                        else:
+                            raise parse_error('Invalid setting error',
+                                            msg="The specified setting in [exani custom=*,*] is invalid.",
+                                              label=command[4])
+                    else:
+                        raise parse_error('Out of range error',
+                                          msg="The specified slot number in [exani custom=*,*] is too high.",
+                                          number=f'0x{cur_data:X}')
+
+                elif command[0] == 0x9D:  # exanimation one shot
+                    cur_data = int(command[3], 16)
+                    if cur_data < 0x20:
+                        cur_setting = command[4].lower()
+                        data_2.append(command[2]+" | "+command[4])
+                        if cur_setting == "enable":
+                                data.append(cur_data)
+                        elif cur_setting == "disable":
+                                data.append(cur_data | 0x80)
+                        else:
+                            raise parse_error('Invalid setting error',
+                                            msg="The specified setting in [exani oneshot=*,*] is invalid.",
+                                              label=command[4])
+                    else:
+                        raise parse_error('Out of range error',
+                                          msg="The specified slot number in [exani oneshot=*,*] is too high.",
+                                          number=f'0x{cur_data:X}')
+
+                elif command[0] == 0xA0 or command[0] == 0xA1:  # execute asm
+                    if len(asm_data) < 0x100:
+                        cur_asm = re.search(r"^\s*((?:.|\s)*?)\s*\[\s*/asm\s*]", content)
+                        content = re.sub(r"^\s*((?:.|\s)*?)\s*\[\s*/asm\s*]", r"", content)
+                        data_2.append(len(asm_data))
+                        if pass_ == 1:
+                            data.append(len(asm_data))
+                            asm_data.append(cur_asm.group(0).split("[/")[0])
+                    else:
+                        raise parse_error('Out of range error',
+                                          msg="You already reached the maximum ASM routines allowed within a single sprite.",
+                                          number=f'0x{len(asm_data):X}')
 
     cur_num += 1
     num_used[msg_number] = cur_num
@@ -415,8 +614,8 @@ def convert_txt(msg_number, msg_path):
 
 
 def create(output_path):
-    global num_used, bin_data
-    print("Creating txt...")
+    global num_used, bin_data, asm_data
+    print("Creating sprite...")
     with open(output_path, "w") as f:
         data_offsets = [0]
         total_bin_data = []
@@ -430,12 +629,23 @@ def create(output_path):
             b.write(bytes(total_bin_data))
         ptr = 'BinPtr:\n\tincbin "vwf_data.bin"\nDataPtr:'
         for i in range(len(num_used.keys())):
-            if (i & 15) == 0:
+            if (i & 7) == 0:
                 ptr += '\n\tdw'
             else:
                 ptr += ", "
             with suppress(Exception):
                 ptr += f' BinPtr+${data_offsets[i]:X}'
+        w = 0
+        asm = ''
+        asm_ptr = 'RoutinePtr:'
+        for asm_code in asm_data:
+            if (w & 7) == 0:
+                asm_ptr += '\n\tdw'
+            else:
+                asm_ptr += ", "
+            asm_ptr += f' Routine{w:02X}'
+            asm += f'Routine{w:02X}:\n{asm_code}\n'
+            w += 1
 
         code = """
 incsrc "vwf_defines.asm"
@@ -445,6 +655,7 @@ print "INIT ",pc
     PHK
     PLA
     STA.l !VWF_DATA+$02
+    STA.l !VWF_ASM_PTRS+$02
     REP #$30
     LDA !E4,x
     AND #$00F0
@@ -457,6 +668,8 @@ print "INIT ",pc
     TAX
     LDA.l DataPtr,x
     STA.l !VWF_DATA
+    LDA.w #RoutinePtr
+    STA.l !VWF_ASM_PTRS
     SEP #$30
     PLX
 
@@ -465,7 +678,7 @@ print "MAIN ",pc
 
 """
 
-        f.write(f'{code}\n{ptr}')
+        f.write(f'{code}\n{ptr}\n{asm_ptr}\n{asm}')
 
 
 def get_tag(orig_tag):
@@ -574,7 +787,9 @@ def generate_json(outputfile: str):
     }
     with open(json_filename, 'w') as j:
         j.write(json.dumps(json_boilerplate, indent=4))
+    print("Finished creating sprite files.")
 
+print ("VWF Dialogues converter v2.0\n")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("defines", help="File that contains the defines used to convert the scripts")
@@ -585,8 +800,9 @@ parser.add_argument("-d", "--debug", help="Produces debug files", action='store_
 args = parser.parse_args()
 debug = args.debug
 if debug:
-    print('Debug mode on')
+    print('Debug mode on\n')
 bin_data = []
+asm_data = []
 num_used = {}
 cur_num = 0
 definition = {}
